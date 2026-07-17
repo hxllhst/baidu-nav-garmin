@@ -1,62 +1,85 @@
 name: Build Connect IQ DataField
 
 on:
-  workflow_dispatch:
   push:
     paths:
-      - "garmin/**"
-      - ".github/workflows/connectiq.yml"
+      - 'garmin/**'
+      - '.github/workflows/connectiq.yml'
+  workflow_dispatch:
+
+env:
+  # Connect IQ SDK 版本约束。Garmin 官方下载列表只保留较新的 SDK,
+  # 用 ">= 7.1.0" 可匹配到当前最新版本(如 8.x); 不要用 ^7.1.0(只匹配 7.x, 会因列表中无 7.x 而失败)
+  CIQ_SDK_VERSION: '>= 7.1.0'
+  # 侧载 .prg 的目标设备(必须包含在 garmin/manifest.xml 的 products 中)
+  # 按自己的手表型号增删
+  SIDELOAD_DEVICES: 'fenix7x'
 
 jobs:
-  prg:
+  build:
     runs-on: ubuntu-latest
-    env:
-      GARMIN_USERNAME: ${{ secrets.GARMIN_USERNAME }}
-      GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 17 (monkeyc runs on Java)
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
-      - name: Install connect-iq-sdk-manager CLI
+      - name: Install Connect IQ SDK manager
         run: |
-          mkdir -p "$HOME/bin"
-          curl -s https://raw.githubusercontent.com/lindell/connect-iq-sdk-manager-cli/master/install.sh | sh -s -- -b "$HOME/bin"
-          echo "$HOME/bin" >> "$GITHUB_PATH"
+          curl -s https://raw.githubusercontent.com/lindell/connect-iq-sdk-manager-cli/master/install.sh \
+            | sh -s -- -b /usr/local/bin
 
-      - name: Accept Connect IQ agreement
-        run: connect-iq-sdk-manager agreement accept --agreement-hash="${{ secrets.CIQ_AGREEMENT_HASH }}"
-
-      - name: Garmin login
-        run: connect-iq-sdk-manager login
-
-      - name: Download Connect IQ SDK 9.x and set as current
+      - name: Accept agreement & login
+        env:
+          GARMIN_USERNAME: ${{ secrets.GARMIN_USERNAME }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
         run: |
-          connect-iq-sdk-manager sdk set '^9.2.0'
-          echo "$(connect-iq-sdk-manager sdk current-path --bin)" >> "$GITHUB_PATH"
+          if [ -z "$GARMIN_USERNAME" ] || [ -z "$GARMIN_PASSWORD" ]; then
+            echo "::error::请在仓库 Settings → Secrets and variables → Actions 中配置 GARMIN_USERNAME / GARMIN_PASSWORD(你的 Garmin 账号, 用于下载官方设备定义文件)"
+            exit 1
+          fi
+          connect-iq-sdk-manager agreement accept
+          connect-iq-sdk-manager login
 
-      - name: Download device configs listed in manifest
-        run: connect-iq-sdk-manager device download --manifest=garmin/manifest.xml
+      - name: Install SDK & device files
+        run: |
+          connect-iq-sdk-manager sdk list || true
+          connect-iq-sdk-manager sdk set "${CIQ_SDK_VERSION}"
+          connect-iq-sdk-manager device download --manifest=garmin/manifest.xml
 
-      - name: Restore developer key from secret
-        run: echo "${{ secrets.CIQ_DEVELOPER_KEY_B64 }}" | base64 -d > developer_key.der
+      - name: Prepare developer key
+        env:
+          CIQ_DEVELOPER_KEY_B64: ${{ secrets.CIQ_DEVELOPER_KEY_B64 }}
+        run: |
+          if [ -n "$CIQ_DEVELOPER_KEY_B64" ]; then
+            echo "$CIQ_DEVELOPER_KEY_B64" | base64 -d > developer_key.der
+            echo "使用仓库 Secret 中的固定开发者密钥"
+          else
+            openssl genrsa -out /tmp/dk.pem 4096
+            openssl pkcs8 -topk8 -inform PEM -outform DER \
+              -in /tmp/dk.pem -out developer_key.der -nocrypt
+            echo "已临时生成开发者密钥(每次构建不同; 如需固定请配置 CIQ_DEVELOPER_KEY_B64)"
+          fi
 
-      - name: Build sideload package (.prg, fenix7x)
-        working-directory: garmin
-        run: monkeyc -d fenix7x -f monkey.jungle -o BaiduNav.prg -y ../developer_key.der -w
-
-      - name: Build store package (.iq)
-        working-directory: garmin
-        run: monkeyc -e -f monkey.jungle -o BaiduNav.iq -y ../developer_key.der -w
+      - name: Build .iq and per-device .prg
+        run: |
+          export PATH="$(connect-iq-sdk-manager sdk current-path --bin):$PATH"
+          mkdir -p out/prg
+          # 商店发布用 .iq(包含 manifest 中所有设备)
+          monkeyc -f garmin/monkey.jungle -y developer_key.der -w -e -o out/BaiduNavDataField.iq
+          # 侧载用 .prg(逐个设备编译, 拷贝到手表 GARMIN/APPS 目录即可)
+          for d in $SIDELOAD_DEVICES; do
+            echo "==== build $d ===="
+            monkeyc -f garmin/monkey.jungle -y developer_key.der -w -r \
+              -d "$d" -o "out/prg/BaiduNav-$d.prg"
+          done
+          ls -lR out
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: BaiduNav-ConnectIQ
-          path: |
-            garmin/BaiduNav.prg
-            garmin/BaiduNav.iq
+          path: out/
