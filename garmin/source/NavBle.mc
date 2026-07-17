@@ -3,246 +3,510 @@ import Toybox.Lang;
 import Toybox.StringUtil;
 import Toybox.System;
 
+
 // ============================================================
-// 手表作为 BLE 中心设备:
-//   扫描广播中携带导航服务 UUID 的手机 → 连接 → 订阅两条特征通知
-// UUID / 数据格式必须与 Android 端 BleNavServer.kt 保持一致。
+// Garmin fenix 7X BLE Central
 //
-// 导航数值特征 (13 字节, 小端):
-//   [0] 协议版本  [1] 转向代码  [2] 有效位(bit0 stepDist / bit1 remainDist / bit2 remainTime)
-//   [3-6] 距转向点距离 uint32 米  [7-10] 剩余距离 uint32 米  [11-12] 剩余时间 uint16 分钟
-// 道路名特征: UTF-8 字符串 (≤20 字节)
+// 手机(Android):
+//      BLE GATT Server
+//          |
+//          | Notify
+//          |
+// Garmin:
+//      BLE Central
+//
+// Service:
+// ba1d0001-5c3a-4e2b-9f8d-6a7c1e2f3a4b
+//
+// Characteristics:
+// ba1d0002-5c3a-4e2b-9f8d-6a7c1e2f3a4b
+//      Navigation data
+//
+// ba1d0003-5c3a-4e2b-9f8d-6a7c1e2f3a4b
+//      Road name
+//
 // ============================================================
+
+
 class NavBleDelegate extends BluetoothLowEnergy.BleDelegate {
 
+
     hidden var mSvcUuid;
+
     hidden var mNavUuid;
+
     hidden var mRoadUuid;
+
+
     hidden var mDevice = null;
+
+
+    // 0: subscribe nav
+    // 1: subscribe road
     hidden var mSubscribeStep = 0;
 
+
+
     function initialize() {
+
         BleDelegate.initialize();
-        mSvcUuid = BluetoothLowEnergy.stringToUuid("ba1d0001-5c3a-4e2b-9f8d-6a7c1e2f3a4b");
-        mNavUuid = BluetoothLowEnergy.stringToUuid("ba1d0002-5c3a-4e2b-9f8d-6a7c1e2f3a4b");
-        mRoadUuid = BluetoothLowEnergy.stringToUuid("ba1d0003-5c3a-4e2b-9f8d-6a7c1e2f3a4b");
+
+
+        mSvcUuid =
+            BluetoothLowEnergy.stringToUuid(
+                "ba1d0001-5c3a-4e2b-9f8d-6a7c1e2f3a4b"
+            );
+
+
+        mNavUuid =
+            BluetoothLowEnergy.stringToUuid(
+                "ba1d0002-5c3a-4e2b-9f8d-6a7c1e2f3a4b"
+            );
+
+
+        mRoadUuid =
+            BluetoothLowEnergy.stringToUuid(
+                "ba1d0003-5c3a-4e2b-9f8d-6a7c1e2f3a4b"
+            );
+
     }
+
+
+
+    // ============================================================
+    // Open BLE
+    //
+    // 注意:
+    // fenix 7X 作为 Central
+    // 不调用 registerProfile()
+    //
+    // registerProfile 是 GATT Server 用法
+    // ============================================================
+
 
     function open() {
+
+
         BluetoothLowEnergy.setDelegate(self);
-        try {
-            BluetoothLowEnergy.registerProfile({
-                :uuid => mSvcUuid,
-                :characteristics => [
-                    { :uuid => mNavUuid, :descriptors => [BluetoothLowEnergy.cccdUuid()] },
-                    { :uuid => mRoadUuid, :descriptors => [BluetoothLowEnergy.cccdUuid()] }
-                ]
-            });
-        } catch (ex) {
-            // Profile 可能已在之前的运行中注册过, 直接开始扫描
-            startScan();
-        }
+
+
+        startScan();
+
     }
+
+
+
 
     function close() {
+
+
         try {
-            BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF);
-        } catch (ex) {
+
+            BluetoothLowEnergy.setScanState(
+                BluetoothLowEnergy.SCAN_STATE_OFF
+            );
+
         }
+        catch(ex) {
+
+        }
+
+
+
         if (mDevice != null) {
+
+
             try {
-                BluetoothLowEnergy.unpairDevice(mDevice);
-            } catch (ex) {
+
+                BluetoothLowEnergy.unpairDevice(
+                    mDevice
+                );
+
             }
+            catch(ex) {
+
+            }
+
+
             mDevice = null;
+
         }
+
+
     }
+
+
+
+
+    // ============================================================
+    // Start scanning
+    // ============================================================
+
 
     hidden function startScan() {
+
+
         NavData.bleState = 1;
+
+
         try {
-            BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_SCANNING);
-        } catch (ex) {
+
+
+            BluetoothLowEnergy.setScanState(
+                BluetoothLowEnergy.SCAN_STATE_SCANNING,
+                {
+                    :scanMode =>
+                        BluetoothLowEnergy.SCAN_MODE_LOW_LATENCY
+                }
+            );
+
+
         }
+        catch(ex) {
+
+
+        }
+
+
     }
 
-    // ---------------- BleDelegate 回调 ----------------
 
-    function onProfileRegister(uuid, status) {
-        startScan();
-    }
 
-    // 修复：使用 try-catch 替代 has() 检查
+
+    // ============================================================
+    // BLE delegate callbacks
+    // ============================================================
+
+
+
     function onScanResults(scanResults) {
-        // 检查 scanResults 是否有效
-        if (scanResults == null) {
-            return;
-        }
-        
-        for (var r = scanResults.next(); r != null; r = scanResults.next()) {
-            // 尝试将结果转换为 ScanResult
-            var scanResult = null;
-            try {
-                // 使用类型判断
-                if (r instanceof BluetoothLowEnergy.ScanResult) {
-                    scanResult = r;
-                } else {
-                    // 如果不是 ScanResult，跳过
-                    continue;
-                }
-            } catch (ex) {
-                // 类型转换失败，跳过
-                continue;
-            }
-            
-            // 获取服务 UUIDs - 使用 try-catch 处理可能不存在的方法
-            var uuids = null;
-            try {
-                // 直接尝试调用，如果不存在会抛出异常
-                uuids = scanResult.getServiceUuids();
-            } catch (ex) {
-                // 如果 getServiceUuids 不可用，尝试从广告数据获取
-                try {
-                    var advData = scanResult.getAdvertisingData();
-                    if (advData != null) {
-                        // 检查是否有 getServiceUuids 方法
-                        try {
-                            uuids = advData.getServiceUuids();
-                        } catch (e) {
-                            // 广告数据也没有，继续
+
+
+        var item = scanResults.next();
+
+
+
+        while(item != null) {
+
+
+
+            // Monkey C next() 返回 Object
+            // 必须转换成 ScanResult
+
+
+            var result =
+                item as BluetoothLowEnergy.ScanResult;
+
+
+
+            if(result != null) {
+
+
+
+                var uuids =
+                    result.getServiceUuids();
+
+
+
+                if(uuids != null) {
+
+
+
+                    var uuid =
+                        uuids.next();
+
+
+
+                    while(uuid != null) {
+
+
+
+                        if(uuid.equals(mSvcUuid)) {
+
+
+
+                            try {
+
+
+
+                                BluetoothLowEnergy.setScanState(
+                                    BluetoothLowEnergy.SCAN_STATE_OFF
+                                );
+
+
+
+                                mDevice =
+                                    BluetoothLowEnergy.pairDevice(
+                                        result
+                                    );
+
+
+
+                            }
+                            catch(ex) {
+
+
+
+                                startScan();
+
+
+                            }
+
+
+
+                            return;
+
+
                         }
+
+
+
+                        uuid =
+                            uuids.next();
+
+
                     }
-                } catch (e) {
-                    // 广告数据获取失败
+
+
                 }
+
+
             }
-            
-            // 如果获取不到 UUIDs，跳过
-            if (uuids == null) {
-                continue;
-            }
-            
-            // 遍历 UUIDs 查找匹配的服务
-            var found = false;
-            for (var u = uuids.next(); u != null; u = uuids.next()) {
-                if (u.equals(mSvcUuid)) {
-                    found = true;
-                    break;
-                }
-            }
-            
-            if (found) {
-                try {
-                    BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF);
-                    mDevice = BluetoothLowEnergy.pairDevice(scanResult);
-                    return;
-                } catch (ex) {
-                    startScan();
-                    return;
-                }
-            }
+
+
+
+            item =
+                scanResults.next();
+
+
         }
+
+
     }
 
-    function onConnectedStateChanged(device, state) {
-        if (state == BluetoothLowEnergy.CONNECTION_STATE_CONNECTED) {
+
+
+
+
+
+    function onConnectedStateChanged(device,state) {
+
+
+
+        if(state ==
+            BluetoothLowEnergy.CONNECTION_STATE_CONNECTED) {
+
+
+
             NavData.bleState = 2;
+
+
+
             mDevice = device;
+
+
+
             mSubscribeStep = 0;
-            writeCccd();
-        } else {
-            // 断开: 清理并重新扫描
-            if (mDevice != null) {
+
+
+
+            subscribeNext();
+
+
+
+        }
+
+        else {
+
+
+
+            NavData.bleState = 1;
+
+
+
+            if(mDevice != null) {
+
+
+
                 try {
-                    BluetoothLowEnergy.unpairDevice(mDevice);
-                } catch (ex) {
+
+
+
+                    BluetoothLowEnergy.unpairDevice(
+                        mDevice
+                    );
+
+
+
                 }
+                catch(ex) {
+
+
+
+                }
+
+
                 mDevice = null;
+
+
             }
+
+
+
             startScan();
+
+
         }
+
+
     }
 
-    // GATT 同时只能有一个未完成请求: 先订阅导航数值, 回调后再订阅道路名
-    hidden function writeCccd() {
-        if (mDevice == null) {
+
+
+
+
+    // ============================================================
+    // Subscribe notification
+    //
+    // GATT:
+    // nav characteristic notify
+    // road characteristic notify
+    //
+    // 一次只写一个 CCCD
+    // ============================================================
+
+
+
+    hidden function subscribeNext() {
+
+
+        if(mDevice == null) {
+
             return;
+
         }
-        var svc = mDevice.getService(mSvcUuid);
-        if (svc == null) {
+
+
+
+        var service =
+            mDevice.getService(
+                mSvcUuid
+            );
+
+
+
+        if(service == null) {
+
             return;
+
         }
-        var chUuid = (mSubscribeStep == 0) ? mNavUuid : mRoadUuid;
-        var ch = svc.getCharacteristic(chUuid);
-        if (ch == null) {
+
+
+
+        var uuid;
+
+
+
+        if(mSubscribeStep == 0) {
+
+
+            uuid = mNavUuid;
+
+
+        }
+
+        else {
+
+
+            uuid = mRoadUuid;
+
+
+        }
+
+
+
+
+
+        var characteristic =
+            service.getCharacteristic(
+                uuid
+            );
+
+
+
+        if(characteristic == null) {
+
             return;
+
         }
-        var cccd = ch.getDescriptor(BluetoothLowEnergy.cccdUuid());
-        if (cccd == null) {
+
+
+
+        var descriptor =
+            characteristic.getDescriptor(
+                BluetoothLowEnergy.cccdUuid()
+            );
+
+
+
+        if(descriptor == null) {
+
             return;
+
         }
+
+
+
         try {
-            cccd.requestWrite([0x01, 0x00]b);
-        } catch (ex) {
+
+
+            descriptor.requestWrite(
+                [0x01,0x00]b
+            );
+
+
         }
+        catch(ex) {
+
+
+
+        }
+
+
+
     }
 
-    function onDescriptorWrite(descriptor, status) {
-        if (mSubscribeStep == 0) {
+
+
+
+    function onDescriptorWrite(
+        descriptor,
+        status
+    ) {
+
+
+
+        if(status != 0) {
+
+            return;
+
+        }
+
+
+
+        if(mSubscribeStep == 0) {
+
+
+
             mSubscribeStep = 1;
-            writeCccd();
-        }
-    }
 
-    function onCharacteristicChanged(characteristic, value) {
-        var u = characteristic.getUuid();
-        if (u.equals(mNavUuid)) {
-            decodeNav(value);
-        } else if (u.equals(mRoadUuid)) {
-            decodeRoad(value);
-        }
-    }
 
-    // ---------------- 解码 ----------------
 
-    hidden function decodeNav(b) {
-        if (b == null || b.size() < 13) {
-            return;
-        }
-        var flags = b[2];
-        NavData.turn = b[1];
-        NavData.stepDist = ((flags & 0x01) != 0) ? u32(b, 3) : -1;
-        NavData.remainDist = ((flags & 0x02) != 0) ? u32(b, 7) : -1;
-        NavData.remainTime = ((flags & 0x04) != 0) ? (u16(b, 11) * 60) : -1;
-        NavData.lastUpdate = System.getTimer();
-        NavData.hasData = true;
-    }
+            subscribeNext();
 
-    hidden function decodeRoad(b) {
-        if (b == null) {
-            return;
-        }
-        if (b.size() == 0) {
-            NavData.roadName = "";
-            return;
-        }
-        var s = StringUtil.convertEncodedString(b, {
-            :fromRepresentation => StringUtil.REPRESENTATION_BYTE_ARRAY,
-            :toRepresentation => StringUtil.REPRESENTATION_STRING_PLAIN_TEXT,
-            :encoding => StringUtil.CHAR_ENCODING_UTF8
-        });
-        if (s instanceof Lang.String) {
-            NavData.roadName = s;
-        }
-        NavData.lastUpdate = System.getTimer();
-        NavData.hasData = true;
-    }
 
-    hidden function u32(b, off) {
-        return b[off] + (b[off + 1] << 8) + (b[off + 2] << 16) + (b[off + 3] << 24);
-    }
 
-    hidden function u16(b, off) {
-        return b[off] + (b[off + 1] << 8);
+        }
+
+
     }
-}
