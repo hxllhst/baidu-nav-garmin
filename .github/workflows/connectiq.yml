@@ -8,18 +8,24 @@ on:
   workflow_dispatch:
 
 env:
-  # 建议固定 SDK 版本，不要使用 ^7.1.0
-  CIQ_SDK_VERSION: '7.2.0'
-
-  # manifest.xml 中支持的设备
+  # Connect IQ SDK 版本约束。Garmin 官方下载列表只保留较新的 SDK,
+  # 用 ">= 7.1.0" 可匹配到当前最新版本(如 8.x); 不要用 ^7.1.0(只匹配 7.x, 会因列表中无 7.x 而失败)
+  CIQ_SDK_VERSION: '>= 7.1.0'
+  # 侧载 .prg 的目标设备(必须包含在 garmin/manifest.xml 的 products 中)
+  # 按自己的手表型号增删
   SIDELOAD_DEVICES: 'fenix7 fenix6pro fr965 fr955 fr245 venu3 edge840 edge1040'
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
       - name: Install Connect IQ SDK manager
         run: |
@@ -38,12 +44,42 @@ jobs:
           connect-iq-sdk-manager agreement accept
           connect-iq-sdk-manager login
 
-      - name: Show SDK list  
+      - name: Install SDK & device files
         run: |
-          connect-iq-sdk-manager sdk list
-      
-      - name: Show download help
+          connect-iq-sdk-manager sdk list || true
+          connect-iq-sdk-manager sdk set "${CIQ_SDK_VERSION}"
+          connect-iq-sdk-manager device download --manifest=garmin/manifest.xml
+
+      - name: Prepare developer key
+        env:
+          CIQ_DEVELOPER_KEY_B64: ${{ secrets.CIQ_DEVELOPER_KEY_B64 }}
         run: |
-          connect-iq-sdk-manager sdk download --help
+          if [ -n "$CIQ_DEVELOPER_KEY_B64" ]; then
+            echo "$CIQ_DEVELOPER_KEY_B64" | base64 -d > developer_key.der
+            echo "使用仓库 Secret 中的固定开发者密钥"
+          else
+            openssl genrsa -out /tmp/dk.pem 4096
+            openssl pkcs8 -topk8 -inform PEM -outform DER \
+              -in /tmp/dk.pem -out developer_key.der -nocrypt
+            echo "已临时生成开发者密钥(每次构建不同; 如需固定请配置 CIQ_DEVELOPER_KEY_B64)"
+          fi
 
+      - name: Build .iq and per-device .prg
+        run: |
+          export PATH="$(connect-iq-sdk-manager sdk current-path --bin):$PATH"
+          mkdir -p out/prg
+          # 商店发布用 .iq(包含 manifest 中所有设备)
+          monkeyc -f garmin/monkey.jungle -y developer_key.der -w -e -o out/BaiduNavDataField.iq
+          # 侧载用 .prg(逐个设备编译, 拷贝到手表 GARMIN/APPS 目录即可)
+          for d in $SIDELOAD_DEVICES; do
+            echo "==== build $d ===="
+            monkeyc -f garmin/monkey.jungle -y developer_key.der -w -r \
+              -d "$d" -o "out/prg/BaiduNav-$d.prg"
+          done
+          ls -lR out
 
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: BaiduNav-ConnectIQ
+          path: out/
