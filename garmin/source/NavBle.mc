@@ -72,7 +72,7 @@ class NavBleDelegate extends BluetoothLowEnergy.BleDelegate {
         startScan();
     }
 
-    // 修复：正确类型转换，添加空值检查
+    // 修复：使用 try-catch 替代 has() 检查
     function onScanResults(scanResults) {
         // 检查 scanResults 是否有效
         if (scanResults == null) {
@@ -80,45 +80,66 @@ class NavBleDelegate extends BluetoothLowEnergy.BleDelegate {
         }
         
         for (var r = scanResults.next(); r != null; r = scanResults.next()) {
-            // 方法1：使用 instanceof 检查类型
-            if (r instanceof BluetoothLowEnergy.ScanResult) {
-                var scanResult = r as BluetoothLowEnergy.ScanResult;
-                
-                // 安全地获取服务 UUIDs
-                var uuids = null;
-                if (scanResult.has(:getServiceUuids)) {
-                    uuids = scanResult.getServiceUuids();
+            // 尝试将结果转换为 ScanResult
+            var scanResult = null;
+            try {
+                // 使用类型判断
+                if (r instanceof BluetoothLowEnergy.ScanResult) {
+                    scanResult = r;
                 } else {
-                    // 备用方法：从广告数据获取
-                    if (scanResult.has(:getAdvertisingData)) {
-                        var advData = scanResult.getAdvertisingData();
-                        if (advData != null && advData.has(:getServiceUuids)) {
-                            uuids = advData.getServiceUuids();
-                        }
-                    }
-                }
-                
-                // 检查 UUIDs 是否有效
-                if (uuids == null) {
+                    // 如果不是 ScanResult，跳过
                     continue;
                 }
-                
-                // 遍历 UUIDs
-                for (var u = uuids.next(); u != null; u = uuids.next()) {
-                    if (u.equals(mSvcUuid)) {
+            } catch (ex) {
+                // 类型转换失败，跳过
+                continue;
+            }
+            
+            // 获取服务 UUIDs - 使用 try-catch 处理可能不存在的方法
+            var uuids = null;
+            try {
+                // 直接尝试调用，如果不存在会抛出异常
+                uuids = scanResult.getServiceUuids();
+            } catch (ex) {
+                // 如果 getServiceUuids 不可用，尝试从广告数据获取
+                try {
+                    var advData = scanResult.getAdvertisingData();
+                    if (advData != null) {
+                        // 检查是否有 getServiceUuids 方法
                         try {
-                            BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF);
-                            // 使用转换后的 scanResult
-                            mDevice = BluetoothLowEnergy.pairDevice(scanResult);
-                        } catch (ex) {
-                            startScan();
+                            uuids = advData.getServiceUuids();
+                        } catch (e) {
+                            // 广告数据也没有，继续
                         }
-                        return;
                     }
+                } catch (e) {
+                    // 广告数据获取失败
                 }
-            } else {
-                // 如果类型不是 ScanResult，尝试另一种方法
-                System.println("Unexpected scan result type: " + r.getClass().toString());
+            }
+            
+            // 如果获取不到 UUIDs，跳过
+            if (uuids == null) {
+                continue;
+            }
+            
+            // 遍历 UUIDs 查找匹配的服务
+            var found = false;
+            for (var u = uuids.next(); u != null; u = uuids.next()) {
+                if (u.equals(mSvcUuid)) {
+                    found = true;
+                    break;
+                }
+            }
+            
+            if (found) {
+                try {
+                    BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF);
+                    mDevice = BluetoothLowEnergy.pairDevice(scanResult);
+                    return;
+                } catch (ex) {
+                    startScan();
+                    return;
+                }
             }
         }
     }
