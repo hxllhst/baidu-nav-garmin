@@ -1,0 +1,11 @@
+<fitContributions>
+    <fitField id="0"
+        displayInChart="true"
+        displayInActivitySummary="true"
+        sortOrder="0"
+        precision="0"
+        chartTitle="@Strings.remain_chart"
+        dataLabel="@Strings.remain_label"
+        unitLabel="@Strings.unit_m"
+        fillColor="#1A73E8" />
+</fitContributions>
