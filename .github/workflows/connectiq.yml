@@ -8,10 +8,10 @@ on:
   workflow_dispatch:
 
 env:
-  # 临时使用，先设置为空以便查看可用版本
+  # 临时留空，让 workflow 自动检测
   CIQ_SDK_VERSION: ''
   # 侧载 .prg 的目标设备
-  SIDELOAD_DEVICES: 'fenix7'
+  SIDELOAD_DEVICES: 'fenix7 fenix6pro fr965 fr955 fr245 venu3 edge840 edge1040'
 
 jobs:
   build:
@@ -36,43 +36,46 @@ jobs:
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
         run: |
           if [ -z "$GARMIN_USERNAME" ] || [ -z "$GARMIN_PASSWORD" ]; then
-            echo "::error::请在仓库 Settings → Secrets and variables → Actions 中配置 GARMIN_USERNAME / GARMIN_PASSWORD(你的 Garmin 账号, 用于下载官方设备定义文件)"
+            echo "::error::请在仓库 Settings → Secrets and variables → Actions 中配置 GARMIN_USERNAME / GARMIN_PASSWORD"
             exit 1
           fi
           connect-iq-sdk-manager agreement accept
           connect-iq-sdk-manager login
 
-      # ★ 新增：查看所有可用 SDK 版本 ★
-      - name: List available SDK versions
+      # ★ 关键：先登录，然后查看可用版本 ★
+      - name: List available SDK versions from remote
         id: list_sdks
         run: |
           echo "=========================================="
-          echo "All available Connect IQ SDK versions:"
+          echo "Fetching available Connect IQ SDK versions..."
           echo "=========================================="
           
-          # 方法1：使用 list 命令查看所有版本
+          # 使用 sdk list 查看所有可用版本（需要先登录）
+          # 这会显示所有可用的远程版本
           echo ""
-          echo "--- Full list ---"
-          connect-iq-sdk-manager sdk list
+          echo "--- Available versions ---"
+          # 获取所有可用版本
+          connect-iq-sdk-manager sdk list --remote
           
           echo ""
-          echo "--- Filtered versions ---"
-          # 提取所有版本号（数字.数字.数字格式）
-          ALL_VERSIONS=$(connect-iq-sdk-manager sdk list 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -V | uniq)
+          echo "--- Parsing version numbers ---"
+          # 提取所有版本号
+          ALL_VERSIONS=$(connect-iq-sdk-manager sdk list --remote 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -V | uniq)
           
           if [ -z "$ALL_VERSIONS" ]; then
-            echo "No versions found via grep, trying alternative method..."
-            # 如果 grep 没找到，尝试其他格式
-            ALL_VERSIONS=$(connect-iq-sdk-manager sdk list 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | sort -V | uniq)
+            # 如果上面的方式不行，尝试其他方式
+            echo "Trying alternative method..."
+            connect-iq-sdk-manager sdk list --remote > /tmp/sdk_list.txt
+            cat /tmp/sdk_list.txt
+            ALL_VERSIONS=$(cat /tmp/sdk_list.txt | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -V | uniq)
           fi
           
+          echo "All versions found:"
           echo "$ALL_VERSIONS"
           
-          # 提取 7.x 版本
+          # 提取各版本
           VERSIONS_7X=$(echo "$ALL_VERSIONS" | grep -E '^7\.' || true)
-          # 提取 6.x 版本
           VERSIONS_6X=$(echo "$ALL_VERSIONS" | grep -E '^6\.' || true)
-          # 获取最新版本（取最后一个）
           LATEST_VERSION=$(echo "$ALL_VERSIONS" | tail -n1)
           LATEST_7X=$(echo "$VERSIONS_7X" | tail -n1)
           LATEST_6X=$(echo "$VERSIONS_6X" | tail -n1)
@@ -96,10 +99,10 @@ jobs:
       - name: Determine SDK version to use
         id: determine_version
         run: |
-          # 检查是否手动指定了版本
+          # 如果 env 中指定了版本，使用指定版本
           if [ -n "${{ env.CIQ_SDK_VERSION }}" ]; then
-            echo "Using specified version: ${{ env.CIQ_SDK_VERSION }}"
-            echo "sdk_version=${{ env.CIQ_SDK_VERSION }}" >> $GITHUB_OUTPUT
+            SDK_VERSION="${{ env.CIQ_SDK_VERSION }}"
+            echo "Using specified version: $SDK_VERSION"
           else
             # 自动选择：优先 7.x，否则 6.x，否则最新
             if [ -n "${{ steps.list_sdks.outputs.latest_7x }}" ]; then
@@ -112,9 +115,8 @@ jobs:
               SDK_VERSION="${{ steps.list_sdks.outputs.latest_version }}"
               echo "Auto-selected latest version: $SDK_VERSION"
             fi
-            echo "sdk_version=$SDK_VERSION" >> $GITHUB_OUTPUT
           fi
-          
+          echo "sdk_version=$SDK_VERSION" >> $GITHUB_OUTPUT
           echo "Final SDK version: $SDK_VERSION"
 
       - name: Install SDK & device files
@@ -142,9 +144,9 @@ jobs:
         run: |
           export PATH="$(connect-iq-sdk-manager sdk current-path --bin):$PATH"
           mkdir -p out/prg
-          # 商店发布用 .iq(包含 manifest 中所有设备)
+          # 商店发布用 .iq
           monkeyc -f garmin/monkey.jungle -y developer_key.der -w -e -o out/BaiduNavDataField.iq
-          # 侧载用 .prg(逐个设备编译)
+          # 侧载用 .prg
           for d in $SIDELOAD_DEVICES; do
             echo "==== build $d ===="
             monkeyc -f garmin/monkey.jungle -y developer_key.der -w -r \
