@@ -510,3 +510,334 @@ class NavBleDelegate extends BluetoothLowEnergy.BleDelegate {
 
 
     }
+
+    // ============================================================
+    // Characteristic Notify
+    // ============================================================
+
+
+    function onCharacteristicChanged(
+        characteristic,
+        value
+    ) {
+
+
+        var uuid =
+            characteristic.getUuid();
+
+
+
+        if(uuid.equals(mNavUuid)) {
+
+
+            decodeNav(value);
+
+
+        }
+        else if(uuid.equals(mRoadUuid)) {
+
+
+            decodeRoad(value);
+
+
+        }
+
+
+    }
+
+
+
+
+    // ============================================================
+    // Navigation data format
+    //
+    // 13 bytes little endian
+    //
+    // [0] version
+    // [1] turn code
+    // [2] flags
+    //
+    // bit0:
+    //      step distance valid
+    //
+    // bit1:
+    //      remaining distance valid
+    //
+    // bit2:
+    //      remaining time valid
+    //
+    //
+    // [3-6]
+    //      distance to next turn uint32 meter
+    //
+    // [7-10]
+    //      remaining distance uint32 meter
+    //
+    // [11-12]
+    //      remaining time uint16 minute
+    //
+    // ============================================================
+
+
+
+    hidden function decodeNav(b) {
+
+
+
+        if(b == null) {
+
+            return;
+
+        }
+
+
+
+        if(b.size() < 13) {
+
+            return;
+
+        }
+
+
+
+
+        var flags = b[2];
+
+
+
+        NavData.turn =
+            b[1];
+
+
+
+
+        if((flags & 0x01) != 0) {
+
+
+            NavData.stepDist =
+                u32(b,3);
+
+
+        }
+        else {
+
+
+            NavData.stepDist = -1;
+
+
+        }
+
+
+
+
+        if((flags & 0x02) != 0) {
+
+
+            NavData.remainDist =
+                u32(b,7);
+
+
+        }
+        else {
+
+
+            NavData.remainDist = -1;
+
+
+        }
+
+
+
+
+        if((flags & 0x04) != 0) {
+
+
+            NavData.remainTime =
+                u16(b,11) * 60;
+
+
+        }
+        else {
+
+
+            NavData.remainTime = -1;
+
+
+        }
+
+
+
+
+        NavData.lastUpdate =
+            System.getTimer();
+
+
+
+        NavData.hasData =
+            true;
+
+
+    }
+
+
+
+
+
+    // ============================================================
+    // Road name UTF-8
+    //
+    // Android:
+    // byte[]
+    //
+    // Garmin:
+    // String
+    //
+    // ============================================================
+
+
+
+    hidden function decodeRoad(b) {
+
+
+
+        if(b == null) {
+
+            return;
+
+        }
+
+
+
+        if(b.size() == 0) {
+
+
+            NavData.roadName = "";
+
+            return;
+
+
+        }
+
+
+
+
+        var text;
+
+
+
+        try {
+
+
+
+            text =
+                StringUtil.convertEncodedString(
+                    b,
+                    {
+                        :fromRepresentation =>
+                            StringUtil.REPRESENTATION_BYTE_ARRAY,
+
+                        :toRepresentation =>
+                            StringUtil.REPRESENTATION_STRING_PLAIN_TEXT,
+
+                        :encoding =>
+                            StringUtil.CHAR_ENCODING_UTF8
+                    }
+                );
+
+
+
+        }
+        catch(ex) {
+
+
+
+            return;
+
+
+        }
+
+
+
+
+
+        if(text instanceof Lang.String) {
+
+
+            NavData.roadName =
+                text;
+
+
+        }
+
+
+
+
+        NavData.lastUpdate =
+            System.getTimer();
+
+
+
+        NavData.hasData =
+            true;
+
+
+
+    }
+
+
+
+
+
+    // ============================================================
+    // Little endian uint32
+    // ============================================================
+
+
+
+    hidden function u32(
+        b,
+        off
+    ) {
+
+
+
+        return
+            b[off]
+            +
+            (b[off + 1] << 8)
+            +
+            (b[off + 2] << 16)
+            +
+            (b[off + 3] << 24);
+
+
+
+    }
+
+
+
+
+    // ============================================================
+    // Little endian uint16
+    // ============================================================
+
+
+
+    hidden function u16(
+        b,
+        off
+    ) {
+
+
+
+        return
+            b[off]
+            +
+            (b[off + 1] << 8);
+
+
+
+    }
+
+
+}
