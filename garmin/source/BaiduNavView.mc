@@ -40,9 +40,10 @@ class BaiduNavView extends WatchUi.DataField {
         var h = dc.getHeight();
 
         if (!NavData.hasData) {
+            var rid = (NavData.bleState == 2) ? Rez.Strings.waiting : Rez.Strings.scanning;
             dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             dc.drawText(w / 2, h / 2, Graphics.FONT_XTINY,
-                WatchUi.loadResource(Rez.Strings.waiting),
+                WatchUi.loadResource(rid),
                 Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
             return;
         }
@@ -151,8 +152,9 @@ class BaiduNavView extends WatchUi.DataField {
     hidden function transformPts(pts, cx, cy, s, c, sn) {
         var out = new [pts.size()];
         for (var i = 0; i < pts.size(); i++) {
-            var x = pts[i][0];
-            var y = pts[i][1];
+            var p = pts[i] as Array<Float>;
+            var x = p[0];
+            var y = p[1];
             out[i] = [(cx + s * (x * c - y * sn)).toNumber(),
                       (cy + s * (x * sn + y * c)).toNumber()];
         }

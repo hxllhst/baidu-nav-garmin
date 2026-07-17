@@ -1,8 +1,6 @@
 import Toybox.Application;
-import Toybox.Communications;
 import Toybox.Lang;
 import Toybox.System;
-import Toybox.WatchUi;
 
 // ============================================================
 // 保存手机端最近一次推送的导航数据
@@ -17,48 +15,31 @@ module NavData {
     var remainTime = -1;  // 剩余时间(秒), -1 未知
     var lastUpdate = 0;   // System.getTimer() 毫秒
     var hasData = false;
+    var bleState = 0;     // 0 未启动  1 扫描中  2 已连接手机
 }
 
 class BaiduNavApp extends Application.AppBase {
+
+    hidden var mBle = null;
 
     function initialize() {
         AppBase.initialize();
     }
 
+    // 数据字段只在活动界面显示期间运行:
+    // onStart 时开始扫描手机, onStop(退出字段/活动)时断开并停止扫描,
+    // 因此手机与手表之间不需要保持长连接。
     function onStart(state) {
-        // 注册接收手机伴侣 App 消息 (经 Garmin Connect / 蓝牙)
-        Communications.registerForPhoneAppMessages(method(:onPhoneMessage));
+        mBle = new NavBleDelegate();
+        mBle.open();
     }
 
     function onStop(state) {
-    }
-
-    hidden function getNum(d, key, def) {
-        var v = d.get(key);
-        if (v instanceof Lang.Number) {
-            return v;
+        if (mBle != null) {
+            mBle.close();
+            mBle = null;
         }
-        if (v instanceof Lang.Long || v instanceof Lang.Float || v instanceof Lang.Double) {
-            return v.toNumber();
-        }
-        return def;
-    }
-
-    function onPhoneMessage(msg) {
-        var data = msg.data;
-        if (!(data instanceof Lang.Dictionary)) {
-            return;
-        }
-        NavData.turn = getNum(data, "t", NavData.turn);
-        NavData.stepDist = getNum(data, "d", -1);
-        NavData.remainDist = getNum(data, "rd", NavData.remainDist);
-        NavData.remainTime = getNum(data, "rt", NavData.remainTime);
-        var r = data.get("r");
-        if (r instanceof Lang.String) {
-            NavData.roadName = r;
-        }
-        NavData.lastUpdate = System.getTimer();
-        NavData.hasData = true;
+        NavData.bleState = 0;
     }
 
     function getInitialView() {

@@ -1,9 +1,9 @@
 <resources>
     <string name="app_name">百度导航→佳明</string>
     <string name="accessibility_label">百度导航→佳明 桥接服务</string>
-    <string name="accessibility_desc">读取百度地图的导航提示(转向、距离、道路名),并通过 Garmin Connect 转发到佳明手表数据字段。本服务仅监听百度地图,不读取其他应用内容。</string>
+    <string name="accessibility_desc">读取百度地图的导航提示(转向、距离、道路名),并通过蓝牙直接发送到佳明手表数据字段。本服务仅监听百度地图,不读取其他应用内容。</string>
     <string name="btn_accessibility">① 开启无障碍服务</string>
-    <string name="btn_reconnect">② 重新连接手表</string>
+    <string name="btn_reconnect">② 重启蓝牙广播</string>
     <string name="btn_test">③ 发送测试指令(左转 350 米)</string>
     <string name="status_placeholder">状态检测中…</string>
 </resources>

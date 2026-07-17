@@ -1,6 +1,7 @@
 <strings>
     <string id="AppName">百度导航</string>
-    <string id="waiting">等待百度导航...</string>
+    <string id="scanning">正在搜索手机蓝牙…</string>
+    <string id="waiting">已连接,等待导航…</string>
     <string id="remain_chart">导航剩余距离</string>
     <string id="remain_label">导航剩余</string>
     <string id="unit_m">米</string>

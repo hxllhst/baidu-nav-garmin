@@ -1,16 +1,25 @@
 package com.baidunav.garmin
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        private const val REQ_BLE = 1001
+    }
 
     private lateinit var tvAccStatus: TextView
     private lateinit var tvGarminStatus: TextView
@@ -31,28 +40,60 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
         findViewById<Button>(R.id.btnReconnect).setOnClickListener {
-            appendLog("正在重新连接手表…")
-            GarminConnector.get(this).discoverDevices()
+            appendLog("正在重启蓝牙广播…")
+            if (ensureBlePermissions()) {
+                BleNavServer.get(this).restart()
+            }
         }
         findViewById<Button>(R.id.btnTest).setOnClickListener {
             val test = NavInfo(Turn.LEFT, 350, "人民中路", 5200, 780)
-            GarminConnector.get(this).send(test, force = true)
+            BleNavServer.get(this).send(test, force = true)
             appendLog("已发送测试指令: ${NavRepo.describe(test)}")
         }
 
-        val connector = GarminConnector.get(this)
-        connector.statusListener = { msg ->
+        val server = BleNavServer.get(this)
+        server.statusListener = { msg ->
             runOnUiThread {
                 appendLog(msg)
-                refreshGarminStatus()
+                refreshBleStatus()
             }
         }
         NavRepo.listener = { msg -> runOnUiThread { appendLog(msg) } }
-        connector.initialize()
+
+        if (ensureBlePermissions()) {
+            server.start()
+        }
     }
 
     override fun onResume() {
         super.onResume()
+        refreshStatus()
+    }
+
+    private fun ensureBlePermissions(): Boolean {
+        if (Build.VERSION.SDK_INT < 31) return true
+        val perms = arrayOf(
+            Manifest.permission.BLUETOOTH_ADVERTISE,
+            Manifest.permission.BLUETOOTH_CONNECT
+        )
+        val missing = perms.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) return true
+        ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQ_BLE)
+        return false
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_BLE) return
+        if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+            BleNavServer.get(this).start()
+        } else {
+            appendLog("蓝牙权限被拒绝, 无法向手表发送数据")
+        }
         refreshStatus()
     }
 
@@ -63,15 +104,15 @@ class MainActivity : AppCompatActivity() {
         } else {
             "❌ 无障碍服务: 未开启(必须开启才能读取百度导航)"
         }
-        refreshGarminStatus()
+        refreshBleStatus()
     }
 
-    private fun refreshGarminStatus() {
-        val connector = GarminConnector.get(this)
-        tvGarminStatus.text = if (connector.hasTarget()) {
-            "✅ 佳明手表: 已连接"
-        } else {
-            "⌛ 佳明手表: 未连接(需安装 Garmin Connect 并配对手表)"
+    private fun refreshBleStatus() {
+        val server = BleNavServer.get(this)
+        tvGarminStatus.text = when {
+            server.hasSubscriber() -> "✅ 蓝牙: 手表已连接并订阅导航数据"
+            server.isAdvertising() -> "📡 蓝牙: 广播中, 等待手表连接(手表打开 BaiduNav 数据字段即自动连接)"
+            else -> "❌ 蓝牙: 广播未启动(检查蓝牙开关与权限, 点「重启蓝牙广播」)"
         }
     }
 

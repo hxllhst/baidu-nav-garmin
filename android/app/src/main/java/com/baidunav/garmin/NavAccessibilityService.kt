@@ -9,7 +9,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 /**
  * 无障碍服务:
  *  - 监听百度地图 (com.baidu.BaiduMap) 的窗口内容变化与通知
- *  - 提取文本 → NavParser 解析 → GarminConnector 发送到手表
+ *  - 提取文本 → NavParser 解析 → BleNavServer 通过蓝牙 GATT 通知手表
  */
 class NavAccessibilityService : AccessibilityService() {
 
@@ -22,7 +22,7 @@ class NavAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        GarminConnector.get(this).initialize()
+        BleNavServer.get(this).start()
         NavRepo.log("无障碍服务已启动, 等待百度地图导航…")
     }
 
@@ -61,7 +61,7 @@ class NavAccessibilityService : AccessibilityService() {
     private fun handleTexts(texts: List<String>) {
         val nav = NavParser.parse(texts) ?: return
         NavRepo.update(nav)
-        GarminConnector.get(this).send(nav)
+        BleNavServer.get(this).send(nav)
     }
 
     private fun collectTexts(node: AccessibilityNodeInfo?, out: MutableList<String>, depth: Int) {

@@ -1,9 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Android 11+ 包可见性: 需要与 Garmin Connect 通信, 并检测百度地图 -->
+    <!-- Android 12+ 蓝牙权限 -->
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Android 11 及以下 -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
+
+    <!-- Android 11+ 包可见性: 检测百度地图 -->
     <queries>
-        <package android:name="com.garmin.android.apps.connectmobile" />
         <package android:name="com.baidu.BaiduMap" />
     </queries>
 

@@ -1,6 +1,7 @@
 <strings>
     <string id="AppName">BaiduNav</string>
-    <string id="waiting">Waiting for Baidu Nav...</string>
+    <string id="scanning">Scanning phone BT...</string>
+    <string id="waiting">Connected, waiting nav...</string>
     <string id="remain_chart">Nav Remaining Distance</string>
     <string id="remain_label">Nav Remaining</string>
     <string id="unit_m">m</string>
