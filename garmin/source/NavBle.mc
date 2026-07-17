@@ -72,19 +72,53 @@ class NavBleDelegate extends BluetoothLowEnergy.BleDelegate {
         startScan();
     }
 
+    // 修复：正确类型转换，添加空值检查
     function onScanResults(scanResults) {
+        // 检查 scanResults 是否有效
+        if (scanResults == null) {
+            return;
+        }
+        
         for (var r = scanResults.next(); r != null; r = scanResults.next()) {
-            var uuids = r.getServiceUuids();
-            for (var u = uuids.next(); u != null; u = uuids.next()) {
-                if (u.equals(mSvcUuid)) {
-                    try {
-                        BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF);
-                        mDevice = BluetoothLowEnergy.pairDevice(r);
-                    } catch (ex) {
-                        startScan();
+            // 方法1：使用 instanceof 检查类型
+            if (r instanceof BluetoothLowEnergy.ScanResult) {
+                var scanResult = r as BluetoothLowEnergy.ScanResult;
+                
+                // 安全地获取服务 UUIDs
+                var uuids = null;
+                if (scanResult.has(:getServiceUuids)) {
+                    uuids = scanResult.getServiceUuids();
+                } else {
+                    // 备用方法：从广告数据获取
+                    if (scanResult.has(:getAdvertisingData)) {
+                        var advData = scanResult.getAdvertisingData();
+                        if (advData != null && advData.has(:getServiceUuids)) {
+                            uuids = advData.getServiceUuids();
+                        }
                     }
-                    return;
                 }
+                
+                // 检查 UUIDs 是否有效
+                if (uuids == null) {
+                    continue;
+                }
+                
+                // 遍历 UUIDs
+                for (var u = uuids.next(); u != null; u = uuids.next()) {
+                    if (u.equals(mSvcUuid)) {
+                        try {
+                            BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF);
+                            // 使用转换后的 scanResult
+                            mDevice = BluetoothLowEnergy.pairDevice(scanResult);
+                        } catch (ex) {
+                            startScan();
+                        }
+                        return;
+                    }
+                }
+            } else {
+                // 如果类型不是 ScanResult，尝试另一种方法
+                System.println("Unexpected scan result type: " + r.getClass().toString());
             }
         }
     }
