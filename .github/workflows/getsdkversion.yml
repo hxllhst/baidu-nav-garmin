@@ -1,0 +1,180 @@
+name: Build Connect IQ DataField
+
+on:
+  push:
+    paths:
+      - 'garmin/**'
+      - '.github/workflows/connectiq.yml'
+  workflow_dispatch:
+    inputs:
+      sdk_version:
+        description: 'Connect IQ SDK 版本 (留空自动获取最新)'
+        required: false
+        default: ''
+        type: string
+
+env:
+  # 默认 SDK 版本（如果手动指定）
+  CIQ_SDK_VERSION: '7.1.0'
+  # 侧载 .prg 的目标设备
+  SIDELOAD_DEVICES: 'fenix7 fenix6pro fr965 fr955 fr245 venu3 edge840 edge1040'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Connect IQ SDK Manager
+        run: |
+          npm install -g connect-iq-sdk-manager
+
+      - name: List all available SDK versions
+        id: list_sdks
+        run: |
+          echo "=== Available Connect IQ SDK Versions ==="
+          connect-iq-sdk-manager sdk list
+          echo "=========================================="
+          
+          # 获取所有可用版本并保存到文件
+          connect-iq-sdk-manager sdk list --output json > sdk_versions.json 2>/dev/null || echo "[]" > sdk_versions.json
+          
+          # 提取版本号列表
+          if command -v jq &> /dev/null; then
+            echo "All versions (jq):"
+            jq -r '.versions[]?.version' sdk_versions.json 2>/dev/null | sort -V || echo "No versions found"
+            
+            # 获取最新的 7.x 版本
+            LATEST_7X=$(jq -r '.versions[]?.version | select(. != null and startswith("7."))' sdk_versions.json 2>/dev/null | sort -V | tail -n1)
+            echo "Latest 7.x version: $LATEST_7X"
+            
+            # 获取最新的 6.x 版本（作为备选）
+            LATEST_6X=$(jq -r '.versions[]?.version | select(. != null and startswith("6."))' sdk_versions.json 2>/dev/null | sort -V | tail -n1)
+            echo "Latest 6.x version: $LATEST_6X"
+            
+            # 设置输出变量
+            echo "latest_7x=$LATEST_7X" >> $GITHUB_OUTPUT
+            echo "latest_6x=$LATEST_6X" >> $GITHUB_OUTPUT
+            
+            # 获取所有可用版本（用于显示）
+            ALL_VERSIONS=$(jq -r '.versions[]?.version | select(. != null)' sdk_versions.json 2>/dev/null | sort -V | tr '\n' ', ' | sed 's/, $//')
+            echo "all_versions=$ALL_VERSIONS" >> $GITHUB_OUTPUT
+          else
+            echo "jq not available, using grep fallback"
+            # 如果没有 jq，使用 grep 提取版本号
+            ALL_VERSIONS=$(connect-iq-sdk-manager sdk list | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -V | uniq | tr '\n' ', ' | sed 's/, $//')
+            echo "all_versions=$ALL_VERSIONS" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine SDK version to use
+        id: determine_version
+        run: |
+          # 如果用户手动指定了版本，使用指定的版本
+          if [ -n "${{ inputs.sdk_version }}" ]; then
+            echo "Using manually specified version: ${{ inputs.sdk_version }}"
+            echo "sdk_version=${{ inputs.sdk_version }}" >> $GITHUB_OUTPUT
+          # 否则使用最新的 7.x
+          elif [ -n "${{ steps.list_sdks.outputs.latest_7x }}" ]; then
+            echo "Using latest 7.x version: ${{ steps.list_sdks.outputs.latest_7x }}"
+            echo "sdk_version=${{ steps.list_sdks.outputs.latest_7x }}" >> $GITHUB_OUTPUT
+          # 回退到最新的 6.x
+          elif [ -n "${{ steps.list_sdks.outputs.latest_6x }}" ]; then
+            echo "Using latest 6.x version (fallback): ${{ steps.list_sdks.outputs.latest_6x }}"
+            echo "sdk_version=${{ steps.list_sdks.outputs.latest_6x }}" >> $GITHUB_OUTPUT
+          else
+            echo "No suitable SDK version found!"
+            exit 1
+          fi
+
+      - name: Display selected SDK version
+        run: |
+          echo "=========================================="
+          echo "Selected SDK Version: ${{ steps.determine_version.outputs.sdk_version }}"
+          echo "All available versions: ${{ steps.list_sdks.outputs.all_versions }}"
+          echo "=========================================="
+
+      - name: Install Connect IQ SDK
+        run: |
+          SDK_VERSION="${{ steps.determine_version.outputs.sdk_version }}"
+          echo "Installing SDK version: $SDK_VERSION"
+          connect-iq-sdk-manager sdk install "$SDK_VERSION"
+          
+          # 验证安装
+          if [ -d "$HOME/.connectiq/sdks/connectiq-$SDK_VERSION" ]; then
+            echo "✅ SDK installed successfully at: $HOME/.connectiq/sdks/connectiq-$SDK_VERSION"
+          else
+            echo "❌ SDK installation failed!"
+            exit 1
+          fi
+
+      - name: Set active SDK
+        run: |
+          SDK_VERSION="${{ steps.determine_version.outputs.sdk_version }}"
+          connect-iq-sdk-manager sdk set "$SDK_VERSION"
+          
+          # 验证设置
+          ACTIVE_SDK=$(connect-iq-sdk-manager sdk current 2>/dev/null || echo "unknown")
+          echo "Active SDK: $ACTIVE_SDK"
+
+      - name: Build Connect IQ project
+        run: |
+          SDK_VERSION="${{ steps.determine_version.outputs.sdk_version }}"
+          SDK_PATH="$HOME/.connectiq/sdks/connectiq-$SDK_VERSION"
+          
+          echo "Using SDK at: $SDK_PATH"
+          echo "Building project..."
+          
+          cd garmin
+          
+          # 获取第一个设备作为构建目标
+          FIRST_DEVICE=$(echo "$SIDELOAD_DEVICES" | awk '{print $1}')
+          echo "Building for device: $FIRST_DEVICE"
+          
+          # 使用 monkeyc 编译器构建
+          "$SDK_PATH/bin/monkeyc" -o output.prg -f manifest.xml -d "$FIRST_DEVICE" *.mc
+          
+          # 检查构建结果
+          if [ -f "output.prg" ]; then
+            echo "✅ Build successful! PRG file size: $(du -h output.prg | cut -f1)"
+            ls -lh output.prg
+          else
+            echo "❌ Build failed!"
+            exit 1
+          fi
+
+      - name: Upload PRG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: datafield-${{ steps.determine_version.outputs.sdk_version }}-${{ github.sha }}
+          path: garmin/output.prg
+          retention-days: 30
+
+      - name: Upload build logs (if failed)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            garmin/*.log
+            ~/.connectiq/sdks/connectiq-*/logs/
+          retention-days: 7
+
+      - name: Summary
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| SDK Version | ${{ steps.determine_version.outputs.sdk_version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Target Devices | $SIDELOAD_DEVICES |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Status | ✅ Success |" >> $GITHUB_STEP_SUMMARY
+          echo "| Artifact | datafield-${{ steps.determine_version.outputs.sdk_version }}-${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
