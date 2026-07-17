@@ -1,49 +1,62 @@
 name: Build Connect IQ DataField
 
 on:
+  workflow_dispatch:
   push:
     paths:
-      - 'garmin/**'
-      - '.github/workflows/connectiq.yml'
-  workflow_dispatch:
-
-env:
-  # 建议固定 SDK 版本，不要使用 ^7.1.0
-  CIQ_SDK_VERSION: '7.2.0'
-
-  # manifest.xml 中支持的设备
-  SIDELOAD_DEVICES: 'fenix7 fenix6pro fr965 fr955 fr245 venu3 edge840 edge1040'
+      - "garmin/**"
+      - ".github/workflows/connectiq.yml"
 
 jobs:
-  build:
+  prg:
     runs-on: ubuntu-latest
-
+    env:
+      GARMIN_USERNAME: ${{ secrets.GARMIN_USERNAME }}
+      GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Connect IQ SDK manager
-        run: |
-          curl -s https://raw.githubusercontent.com/lindell/connect-iq-sdk-manager-cli/master/install.sh \
-            | sh -s -- -b /usr/local/bin
+      - name: Set up JDK 17 (monkeyc runs on Java)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
-      - name: Accept agreement & login
-        env:
-          GARMIN_USERNAME: ${{ secrets.GARMIN_USERNAME }}
-          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+      - name: Install connect-iq-sdk-manager CLI
         run: |
-          if [ -z "$GARMIN_USERNAME" ] || [ -z "$GARMIN_PASSWORD" ]; then
-            echo "::error::请在仓库 Settings → Secrets and variables → Actions 中配置 GARMIN_USERNAME / GARMIN_PASSWORD(你的 Garmin 账号, 用于下载官方设备定义文件)"
-            exit 1
-          fi
-          connect-iq-sdk-manager agreement accept
-          connect-iq-sdk-manager login
+          mkdir -p "$HOME/bin"
+          curl -s https://raw.githubusercontent.com/lindell/connect-iq-sdk-manager-cli/master/install.sh | sh -s -- -b "$HOME/bin"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
 
-      - name: Show SDK list  
+      - name: Accept Connect IQ agreement
+        run: connect-iq-sdk-manager agreement accept --agreement-hash="${{ secrets.CIQ_AGREEMENT_HASH }}"
+
+      - name: Garmin login
+        run: connect-iq-sdk-manager login
+
+      - name: Download Connect IQ SDK 9.x and set as current
         run: |
-          connect-iq-sdk-manager sdk list
-      
-      - name: Show download help
-        run: |
-          connect-iq-sdk-manager sdk download --help
+          connect-iq-sdk-manager sdk set '^9.2.0'
+          echo "$(connect-iq-sdk-manager sdk current-path --bin)" >> "$GITHUB_PATH"
 
+      - name: Download device configs listed in manifest
+        run: connect-iq-sdk-manager device download --manifest=garmin/manifest.xml
 
+      - name: Restore developer key from secret
+        run: echo "${{ secrets.CIQ_DEVELOPER_KEY_B64 }}" | base64 -d > developer_key.der
+
+      - name: Build sideload package (.prg, fenix7x)
+        working-directory: garmin
+        run: monkeyc -d fenix7x -f monkey.jungle -o BaiduNav.prg -y ../developer_key.der -w
+
+      - name: Build store package (.iq)
+        working-directory: garmin
+        run: monkeyc -e -f monkey.jungle -o BaiduNav.iq -y ../developer_key.der -w
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: BaiduNav-ConnectIQ
+          path: |
+            garmin/BaiduNav.prg
+            garmin/BaiduNav.iq
