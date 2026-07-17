@@ -1,4 +1,4 @@
-name: Build Connect IQ DataField
+name: list sdk chatgpt
 
 on:
   push:
@@ -20,134 +20,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Install Connect IQ SDK Manager
+      
+      - name: Show SDK list  
         run: |
-          curl -s https://raw.githubusercontent.com/lindell/connect-iq-sdk-manager-cli/master/install.sh \
-            | sh -s -- -b /usr/local/bin
-
-      - name: Accept agreement & login
-        env:
-          GARMIN_USERNAME: ${{ secrets.GARMIN_USERNAME }}
-          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
-        run: |
-          if [ -z "$GARMIN_USERNAME" ] || [ -z "$GARMIN_PASSWORD" ]; then
-            echo "::error::请在 GitHub Secrets 中配置 GARMIN_USERNAME 和 GARMIN_PASSWORD"
-            exit 1
-          fi
-
-          connect-iq-sdk-manager agreement accept
-          connect-iq-sdk-manager login
-
-      ####################################################################
-      # 安装 SDK
-      ####################################################################
-      - name: Install SDK
-        run: |
-          connect-iq-sdk-manager sdk install "${CIQ_SDK_VERSION}"
-          connect-iq-sdk-manager sdk set "${CIQ_SDK_VERSION}"
-
-      ####################################################################
-      # 下载 manifest.xml 中所有设备定义
-      ####################################################################
-      - name: Download device files
-        run: |
-          connect-iq-sdk-manager device download --manifest=garmin/manifest.xml
-
-      ####################################################################
-      # 输出环境信息，方便排查问题
-      ####################################################################
-      - name: Verify SDK installation
-        run: |
-          echo "===== SDK Current ====="
-          connect-iq-sdk-manager sdk current
-
-          echo
-          echo "===== Installed SDKs ====="
           connect-iq-sdk-manager sdk list
-
-          echo
-          echo "===== Installed Devices ====="
-          connect-iq-sdk-manager device list
-
-          echo
-          echo "===== SDK Path ====="
-          connect-iq-sdk-manager sdk current-path
-
-      ####################################################################
-      # 准备开发者密钥
-      ####################################################################
-      - name: Prepare developer key
-        env:
-          CIQ_DEVELOPER_KEY_B64: ${{ secrets.CIQ_DEVELOPER_KEY_B64 }}
+      
+      - name: Show download help
         run: |
-          if [ -n "$CIQ_DEVELOPER_KEY_B64" ]; then
-            echo "$CIQ_DEVELOPER_KEY_B64" | base64 -d > developer_key.der
-            echo "使用固定开发者密钥"
-          else
-            openssl genrsa -out /tmp/dk.pem 4096
+          connect-iq-sdk-manager sdk download --help
 
-            openssl pkcs8 \
-              -topk8 \
-              -inform PEM \
-              -outform DER \
-              -in /tmp/dk.pem \
-              -out developer_key.der \
-              -nocrypt
 
-            echo "未配置 CIQ_DEVELOPER_KEY_B64，已生成临时开发者密钥"
-          fi
-
-      ####################################################################
-      # 编译
-      ####################################################################
-      - name: Build .iq and per-device .prg
-        run: |
-          export PATH="$(connect-iq-sdk-manager sdk current-path --bin):$PATH"
-
-          mkdir -p out/prg
-
-          echo "===== Build Store Package (.iq) ====="
-
-          monkeyc \
-            -f garmin/monkey.jungle \
-            -y developer_key.der \
-            -w \
-            -e \
-            -o out/BaiduNavDataField.iq
-
-          echo
-          echo "===== Build Device PRGs ====="
-
-          for d in $SIDELOAD_DEVICES
-          do
-            echo "--------------------------------------"
-            echo "Building $d"
-
-            monkeyc \
-              -f garmin/monkey.jungle \
-              -y developer_key.der \
-              -w \
-              -r \
-              -d "$d" \
-              -o "out/prg/BaiduNav-${d}.prg"
-          done
-
-          echo
-          echo "===== Output Files ====="
-          ls -lR out
-
-      ####################################################################
-      # 上传编译结果
-      ####################################################################
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: BaiduNav-ConnectIQ
-          path: out/
