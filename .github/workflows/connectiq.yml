@@ -1,4 +1,4 @@
-name: list sdk chatgpt
+name: Build Connect IQ DataField
 
 on:
   push:
@@ -20,7 +20,24 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      
+
+      - name: Install Connect IQ SDK manager
+        run: |
+          curl -s https://raw.githubusercontent.com/lindell/connect-iq-sdk-manager-cli/master/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      - name: Accept agreement & login
+        env:
+          GARMIN_USERNAME: ${{ secrets.GARMIN_USERNAME }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+        run: |
+          if [ -z "$GARMIN_USERNAME" ] || [ -z "$GARMIN_PASSWORD" ]; then
+            echo "::error::请在仓库 Settings → Secrets and variables → Actions 中配置 GARMIN_USERNAME / GARMIN_PASSWORD(你的 Garmin 账号, 用于下载官方设备定义文件)"
+            exit 1
+          fi
+          connect-iq-sdk-manager agreement accept
+          connect-iq-sdk-manager login
+
       - name: Show SDK list  
         run: |
           connect-iq-sdk-manager sdk list
