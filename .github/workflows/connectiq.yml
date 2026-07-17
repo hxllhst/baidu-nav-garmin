@@ -9,7 +9,7 @@ on:
 
 env:
   # Connect IQ SDK 版本(语义化范围, ^7.1.0 = 最新的 7.x)
-  CIQ_SDK_VERSION: '^7.1.0'
+  CIQ_SDK_VERSION: '7.0.0'
   # 侧载 .prg 的目标设备(必须包含在 garmin/manifest.xml 的 products 中)
   # 按自己的手表型号增删
   SIDELOAD_DEVICES: 'fenix7 fenix6pro fr965 fr955 fr245 venu3 edge840 edge1040'
