@@ -152,12 +152,8 @@ class NavBleDelegate extends BluetoothLowEnergy.BleDelegate {
         try {
 
 
-            BluetoothLowEnergy.setScanState(
-                BluetoothLowEnergy.SCAN_STATE_SCANNING,
-                {
-                    :scanMode =>
-                        BluetoothLowEnergy.SCAN_MODE_LOW_LATENCY
-                }
+        BluetoothLowEnergy.setScanState(
+            BluetoothLowEnergy.SCAN_STATE_SCANNING
             );
 
 
